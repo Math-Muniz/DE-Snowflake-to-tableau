@@ -10,6 +10,7 @@ I use different technologies such as SQL, Amazon Web Services (AWS), Snowflake, 
 
 ## Technology Used
 - Amazon Web Service (AWS)
+- Snowflake 
 - Structured Query Language (SQL)
 - Data Visualization Software (Tableau)
 
