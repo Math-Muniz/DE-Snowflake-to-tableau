@@ -1,1 +1,0 @@
-# DE-Snowflake-to-tableau
