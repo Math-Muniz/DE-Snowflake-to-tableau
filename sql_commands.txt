@@ -1,0 +1,179 @@
+CREATE DATABASE DE_Project;
+
+---------------
+
+USE DATABASE DE_Project;
+
+---------------
+
+create or replace temporary stage g2_stage
+    file_format= (type = json)
+    credentials = (AWS_KEY_ID='' AWS_SECRET_KEY='')
+    url = 's3://sdg-two-data/';
+    
+--------------
+
+select * from @g2_stage
+
+--------------
+
+SELECT g2_flat.*
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2
+    ,lateral flatten(input => g2.json_data) g2_flat
+    
+-------------
+
+SELECT g2_flat.value['input']['company_name']
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2
+    ,lateral flatten(input => g2.json_data) g2_flat
+    
+------------
+
+SELECT 
+lower(g2_flat.value['input']['company_name']) AS company_name,
+cast(value['number_of_reviews'] AS INT) AS number_of_reviews,
+cast(value['number_of_stars'] AS NUMERIC(38,2)) AS star_rating,
+    value['categories_on_g2'] category_list,
+    value['top_10_competitors'] top_10_competitors
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2
+    ,lateral flatten(input => g2.json_data) g2_flat
+    
+-----------
+
+SELECT 
+    lower(g2_flat.value['input']['company_name']) AS company_name,
+    cast(value['number_of_reviews'] AS INT) AS number_of_reviews,
+    cast(value['number_of_stars'] AS NUMERIC(38,2)) AS star_rating,
+    value['categories_on_g2'] category_list
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat
+Union all
+
+SELECT lower(g2_flat_competitors.value ['competitor_name']) AS company_name,
+        cast(g2_flat_competitors.value['number_of_reviews'] AS INT) AS number_of_reviews,
+        cast(g2_flat_competitors.value['number_of_stars'] AS NUMERIC(38,2)) AS star_rating,
+        g2_flat_competitors.value['product_category'] AS category_list
+FROM (
+    SELECT $1 json_data
+    FROM  @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat,
+    lateral flatten(input => g2_flat.value ['top_10_competitors'])g2_flat_competitors
+    
+-----------------
+
+CREATE OR replace Table vendor_rating AS
+SELECT 
+    lower(g2_flat.value['input']['company_name']) AS company_name,
+    cast(value['number_of_reviews'] AS INT) AS number_of_reviews,
+    cast(value['number_of_stars'] AS NUMERIC(38,2)) AS star_rating,
+    value['categories_on_g2'] category_list
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat
+Union all
+
+SELECT lower(g2_flat_competitors.value ['competitor_name']) AS company_name,
+        cast(g2_flat_competitors.value['number_of_reviews'] AS INT) AS number_of_reviews,
+        cast(g2_flat_competitors.value['number_of_stars'] AS NUMERIC(38,2)) AS star_rating,
+        g2_flat_competitors.value['product_category'] AS category_list
+FROM (
+    SELECT $1 json_data
+    FROM  @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat,
+    lateral flatten(input => g2_flat.value ['top_10_competitors'])g2_flat_competitors
+    
+--------------------------
+
+CREATE OR replace Table vendor_competitor_rating AS    
+SELECT lower(g2_flat.value ['input'] ['company_name']) AS company_name,
+        lower(g2_flat_competitors.value ['competitor_name']) AS competitor_name,
+        cast(g2_flat_competitors.value['number_of_reviews'] AS INT) AS number_of_reviews,
+        cast(g2_flat_competitors.value['number_of_stars'] AS NUMERIC(38,2)) AS star_rating
+FROM (
+    SELECT $1 json_data
+    FROM  @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat,
+    lateral flatten(input => g2_flat.value ['top_10_competitors'])g2_flat_competitors
+    
+--------------------- category
+
+CREATE OR replace TABLE vendor_category AS
+
+SELECT lower(g2_flat_competitor.value['competitor_name']) company_name,
+    competitor_category.value AS company_category
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat,
+    lateral flatten(input => g2_flat.value ['top_10_competitors']) g2_flat_competitor,
+    lateral flatten(input => g2_flat_competitor.value['product_category']) competitor_category
+
+UNION ALL
+
+SELECT lower(g2_flat.value ['input'] ['company_name']),
+    category_flat.value
+FROM (
+    SELECT $1 json_data
+    FROM @g2_stage src
+    ) g2,
+    lateral flatten(input => g2.json_data) g2_flat,
+    lateral flatten(input =>g2_flat.value ['categories_on_g2']) category_flat;
+    
+-----------------------
+
+CREATE OR replace TABLE vendor_category_rating AS
+SELECT sum(vr.number_of_reviews * vr.star_rating) * 1.0 / sum(number_of_reviews) avg_stars_category, company_category
+FROM vendor_rating vr
+JOIN vendor_category vc
+ON vr.company_name = vc.company_name
+GROUP BY company_category
+
+--------------------- informatic category
+
+CREATE OR replace TABLE vendor_category_comparison (
+    avg_stars_category NUMERIC(38,10),
+    company_name VARCHAR(256),
+    category_list VARCHAR(512),
+    company_category VARCHAR(256),
+    star_rating NUMERIC(38,2)
+) AS 
+SELECT avg_stars_category, 
+    lower(vc.company_name), 
+    category_list, 
+    lower(cr.company_category), 
+    star_rating
+FROM vendor_category_rating cr
+JOIN vendor_category vc ON vc.company_category = cr.company_category
+JOIN vendor_rating vr ON replace (vc.company_name, '"','') = replace(vr.company_name,'"','')
+
+-------------------
+
+SELECT * FROM vendor_competitor_rating
+SELECT * FROM vendor_category_comparison
+SELECT * FROM vendor_rating
+
+-------------------
+
+DROP TABLE VENDOR_CATEGORY
+
+-------------------
+
+DROP TABLE VENDOR_CATEGORY_RATING
