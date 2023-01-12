@@ -13,7 +13,7 @@ I use different technologies such as SQL, Amazon Web Services (AWS), Snowflake, 
 - Structured Query Language (SQL)
 - Data Visualization Software (Tableau)
 
-##Steps
+## Steps
 
 <img src="Agenda.jpg">
 
